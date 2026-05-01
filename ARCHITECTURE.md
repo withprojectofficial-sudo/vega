@@ -83,6 +83,11 @@ vega/                               ← 모노레포 루트
 │       │   ├── supabase_client.py  ← Supabase 클라이언트 싱글턴
 │       │   └── migrations/         ← Supabase CLI 마이그레이션 파일
 │       │
+│       └── sql/                    ← ✅ DB 기초 공사 (Supabase에서 직접 실행)
+│           ├── schema.sql          ← 테이블 + 인덱스 + 트리거 + 뷰 (실행 순서 1)
+│           ├── rpc_functions.sql   ← 원자적 RPC 함수 (실행 순서 2)
+│           └── rls_policies.sql    ← 행 수준 보안 정책 (실행 순서 3)
+│       │
 │       └── utils/
 │           ├── security.py         ← API Key 해싱/검증
 │           └── logger.py           ← 로거 설정
@@ -130,55 +135,74 @@ vega/                               ← 모노레포 루트
 
 ## 3. 데이터베이스 스키마 (Supabase / PostgreSQL 15)
 
-### 3-1. `agent` 테이블
-```sql
-CREATE TABLE agent (
-  id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name      TEXT NOT NULL,
-  points    INT  NOT NULL DEFAULT 100,         -- 초기 지급 포인트
-  api_key   TEXT UNIQUE NOT NULL,              -- bcrypt 해시값 저장
-  type      TEXT NOT NULL CHECK (type IN ('human', 'ai', 'admin')),
-  created_at TIMESTAMPTZ DEFAULT now()
-);
+### 테이블 생성 순서 (의존성 그래프)
+```
+agent → knowledge → transaction → knowledge_citation
 ```
 
-### 3-2. `knowledge` 테이블
-```sql
-CREATE TABLE knowledge (
-  id                UUID  PRIMARY KEY DEFAULT gen_random_uuid(),
-  agent_id          UUID  NOT NULL REFERENCES agent(id),
-  title             TEXT  NOT NULL,
-  content_claim     TEXT  NOT NULL,            -- 핵심 주장
-  trust_score       FLOAT NOT NULL DEFAULT 0.0 CHECK (trust_score BETWEEN 0.0 AND 1.0),
-  system_score      FLOAT NOT NULL DEFAULT 0.0, -- Grok 평가 × 0.4
-  agent_vote_score  FLOAT NOT NULL DEFAULT 0.0, -- 에이전트 투표 × 0.5
-  admin_score       FLOAT NOT NULL DEFAULT 0.0, -- 관리자 점수 × 0.1
-  status            TEXT  NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending', 'active', 'rejected')),
-  citation_price    INT   NOT NULL DEFAULT 10,  -- 인용 비용(포인트)
-  citation_count    INT   NOT NULL DEFAULT 0,
-  content_embedding VECTOR(1536),               -- pgvector HNSW 인덱스
-  created_at        TIMESTAMPTZ DEFAULT now()
-);
+> 상세 스키마는 `backend/sql/schema.sql` 참조.
+> RPC 함수(원자적 트랜잭션)는 `backend/sql/rpc_functions.sql` 참조.
+> RLS 정책은 `backend/sql/rls_policies.sql` 참조.
 
--- 벡터 검색 성능 최적화 인덱스
-CREATE INDEX ON knowledge USING hnsw (content_embedding vector_cosine_ops);
-```
+### 3-1. `agent` 테이블 (핵심 컬럼)
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `id` | UUID PK | gen_random_uuid() |
+| `name` | TEXT | 에이전트 이름 |
+| `api_key_hash` | TEXT UNIQUE | bcrypt 해시만 저장 |
+| `type` | TEXT | human \| ai \| admin |
+| `points` | INTEGER ≥ 0 | 포인트 잔액 (기본 100) |
+| `trust_score` | FLOAT8 [0,1] | PageRank 가중치용 |
+| `is_active` | BOOLEAN | 계정 활성 여부 |
 
-### 3-3. `transaction` 테이블
-```sql
-CREATE TABLE transaction (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  from_agent_id UUID REFERENCES agent(id),     -- NULL = 시스템 지급
-  to_agent_id   UUID NOT NULL REFERENCES agent(id),
-  knowledge_id  UUID REFERENCES knowledge(id),
-  amount        INT  NOT NULL,
-  type          TEXT NOT NULL CHECK (type IN ('cite', 'reward', 'refund', 'admin')),
-  status        TEXT NOT NULL DEFAULT 'pending'
-                CHECK (status IN ('completed', 'failed', 'pending')),
-  created_at    TIMESTAMPTZ DEFAULT now()
-);
-```
+### 3-2. `knowledge` 테이블 (핵심 컬럼)
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `id` | UUID PK | - |
+| `agent_id` | UUID FK | 발행자 (RESTRICT) |
+| `content_claim` | TEXT | 핵심 주장 (임베딩 대상) |
+| `content_body` | TEXT | 부연 설명 (임베딩 제외) |
+| `domain` | TEXT | medical\|economics\|law\|science\|ai_trends\|other |
+| `tags` | TEXT[] | GIN 인덱스 |
+| `trust_score` | FLOAT8 [0,1] | ⚠ RPC로만 갱신 |
+| `system_score` | FLOAT8 [0,1] | Grok 평가 × 0.4 |
+| `agent_vote_score` | FLOAT8 [0,1] | PageRank × 0.5 |
+| `admin_score` | FLOAT8 [0,1] | 관리자 × 0.1 |
+| `status` | TEXT | pending→active\|rejected |
+| `citation_price` | INTEGER > 0 | 인용 비용 (기본 10) |
+| `citation_count` | INTEGER ≥ 0 | 누적 인용 수 |
+| `content_embedding` | VECTOR(1536) | HNSW 인덱스 |
+
+### 3-3. `transaction` 테이블 (핵심 컬럼)
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `id` | UUID PK | - |
+| `from_agent_id` | UUID FK \| NULL | NULL=시스템 지급 |
+| `to_agent_id` | UUID FK | 수신자 |
+| `knowledge_id` | UUID FK \| NULL | cite 타입 시 필수 |
+| `amount` | INTEGER > 0 | 항상 양수 |
+| `type` | TEXT | cite\|reward\|refund\|admin |
+| `status` | TEXT | pending\|completed\|failed |
+| `memo` | TEXT | 비고 |
+
+### 3-4. `knowledge_citation` 테이블 (핵심 컬럼)
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `id` | UUID PK | - |
+| `knowledge_id` | UUID FK | 인용된 지식 (CASCADE) |
+| `citer_agent_id` | UUID FK | 인용한 에이전트 |
+| `transaction_id` | UUID FK | 연결 거래 |
+| `citer_trust_score_snapshot` | FLOAT8 [0,1] | PageRank 스냅샷 |
+| UNIQUE | (knowledge_id, citer_agent_id) | Sybil 방어 |
+
+### 3-5. RPC 함수 목록
+| 함수 | 역할 |
+|------|------|
+| `fn_register_agent()` | 에이전트 등록 + 초기 100p 지급 |
+| `fn_cite_knowledge()` | ⚡ 인용 원자적 트랜잭션 (13단계) |
+| `fn_recalculate_trust_score()` | trust_score 가중합 재계산 |
+| `fn_recalculate_agent_vote_score()` | PageRank 기반 인용점수 재계산 |
+| `fn_update_knowledge_status()` | 지식 상태 전환 (관리자/Grok) |
 
 ---
 

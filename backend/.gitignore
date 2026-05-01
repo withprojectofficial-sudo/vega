@@ -1,0 +1,33 @@
+# ── 환경변수 (절대 커밋 금지) ──
+.env
+.env.local
+.env.*.local
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── 가상환경 ──
+venv/
+.venv/
+env/
+ENV/
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+
+# ── 빌드 산출물 ──
+dist/
+build/
+*.egg-info/
+
+# ── 로그 ──
+*.log
+logs/

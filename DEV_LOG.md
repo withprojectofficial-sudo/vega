@@ -30,8 +30,135 @@
 - [ ] `.env.example` 파일 생성 (백엔드/프론트엔드 필요 환경변수 정의)
 - [ ] `/backend` 디렉터리 초기 구조 생성 (FastAPI 프로젝트 스캐폴딩)
 - [ ] `/frontend` 디렉터리 초기 구조 생성 (Flutter 프로젝트 스캐폴딩)
-- [ ] Supabase 프로젝트 생성 및 스키마 SQL 실행 (ARCHITECTURE.md § 3 참조)
+- [x] ~~Supabase 프로젝트 생성 및 스키마 SQL 실행 (ARCHITECTURE.md § 3 참조)~~ → SQL 파일 작성 완료
 - [ ] `requirements.txt` 초안 작성 (FastAPI, Pydantic v2, supabase-py, asyncpg 등)
+
+---
+
+## [2026-05-01] - DB 기초 공사 (Week 1 완료)
+
+### 작업 내역
+- `backend/sql/` 폴더 신설.
+- `schema.sql` 작성: 4개 테이블 + 인덱스 + 트리거 + 3개 뷰.
+- `rpc_functions.sql` 작성: 5개 핵심 RPC 함수.
+- `rls_policies.sql` 작성: 행 수준 보안 정책.
+- `ARCHITECTURE.md` DB 스키마 섹션 → 테이블 컬럼 표 + RPC 목록으로 갱신.
+
+### 결정 사항
+
+**테이블 4개 확정** (기획서 3개 → 4개로 확장):
+- 기존: agent, knowledge, transaction
+- 추가: `knowledge_citation` — PageRank 계산과 Sybil Attack 방어에 필수.
+  인용 당시의 citer trust_score 스냅샷을 보존해야 이력 불변성 + 재계산 가능성을 동시에 만족.
+
+**컬럼 확장 근거**:
+- `knowledge.content_body` 추가: 핵심 주장(content_claim)만 임베딩해 검색 품질 유지.
+  본문은 content_body로 분리.
+- `knowledge.domain` 추가: 타겟 도메인 필터(의료/경제/법률/과학/AI트렌드) 구현 필수.
+- `knowledge.tags[]` 추가: GIN 인덱스 기반 세분화 태깅. 검색 정밀도 향상.
+- `agent.bio` 추가: 미래 프로필 확장 대비 (현재 선택적).
+- `agent.is_active` 추가: 하드 삭제 대신 비활성화 패턴 채택 (데이터 무결성).
+
+**인덱스 전략 확정**:
+- HNSW `m=16, ef_construction=64`: Week 2 벤치마크 후 조정 예정.
+- Partial index (`WHERE status = 'active'`): 활성 지식만 인덱싱해 저장소 절약.
+- 복합 인덱스: `(domain, trust_score DESC)` — 도메인 필터 + 정렬 조합 최적화.
+
+**PageRank 수식 확정**:
+```
+agent_vote_score = avg(citer_trust_score_snapshot) × log₁₀(인용수+1) / log₁₀(101)
+```
+- log₁₀(101) ≈ 2.004: 100회 인용 시 평균 citer 신뢰점수에 수렴 (상한 정규화).
+- LEAST(결과, 1.0): 소수점 오차로 인한 1.0 초과 방지.
+
+**RLS 전략 확정**:
+- FastAPI → service_role 키 사용 → RLS 우회 (쓰기 전담).
+- anon 키 → RLS 적용 → 활성 지식 SELECT만 허용.
+- 직접 INSERT/UPDATE/DELETE → 전면 차단 (RPC 함수만 허용).
+
+**추가된 에러코드** (CLAUDE.md § 3-3에 추가 필요):
+- `VEGA_009`: 자기 인용 시도 → 403
+- `VEGA_010`: 중복 인용 시도 → 409
+
+### 이슈 & 해결
+- `transaction`이 SQL 예약어와 충돌 우려 → PostgreSQL에서는 테이블명으로 사용 가능 확인. 유지.
+- `knowledge_citation → transaction` 순환 참조 위험 → 테이블 생성 순서 고정으로 해결.
+  (agent → knowledge → transaction → knowledge_citation)
+
+### 다음 할 일 (Week 1 마무리)
+- [ ] Supabase 대시보드에서 SQL 파일 3개 순서대로 실행
+- [x] ~~CLAUDE.md § 3-3 에러코드 표에 VEGA_009, VEGA_010 추가~~ → 완료
+- [x] ~~`.env.example` 파일 생성~~ → 완료
+- [x] ~~FastAPI 프로젝트 스캐폴딩 시작~~ → 완료 (아래 로그 참조)
+
+---
+
+## [2026-05-01] - FastAPI 백엔드 초기 구조 구축 (Week 1 완료)
+
+### 작업 내역
+
+`backend/` 전체 FastAPI 프로젝트 초기 구조 구축 완료.
+
+**생성된 파일 (총 27개):**
+```
+backend/
+├── requirements.txt       - 의존성 패키지 (fastapi, supabase, bcrypt, structlog 등)
+├── Dockerfile             - Railway 배포용 (PORT 환경변수 자동 감지)
+├── .env                   - 환경변수 (git 제외, Supabase URL/Key 포함)
+├── .env.example           - 환경변수 키 목록 (git 포함, 설명 포함)
+├── .gitignore
+└── app/
+    ├── main.py            - FastAPI 앱, lifespan, CORS, 예외핸들러
+    ├── config.py          - pydantic-settings 환경변수 로드
+    ├── dependencies.py    - API Key 인증, 관리자 인증, DB 의존성
+    ├── exceptions.py      - VegaError + 에러코드 열거형 + 전역 핸들러
+    ├── api/v1/
+    │   ├── router.py      - v1 라우터 통합
+    │   └── endpoints/
+    │       ├── agent.py       - POST /register, GET /{id}/points
+    │       ├── knowledge.py   - POST /publish, GET /search, GET /{id}, POST /cite
+    │       └── research.py    - POST /research (Grok + 시맨틱 검색)
+    ├── schemas/           - Pydantic v2 모델 (common, agent, knowledge, transaction)
+    ├── services/          - 비즈니스 로직 (agent, knowledge, citation, embedding)
+    ├── db/                - Supabase 비동기 클라이언트 싱글턴
+    └── utils/             - security(API Key 해싱), logger(structlog)
+```
+
+### 결정 사항
+
+**비동기 클라이언트 전략 확정**:
+- `acreate_client()` (supabase-py v2 async)를 FastAPI `lifespan`에서 초기화.
+- 서비스 레이어는 `async def`로 통일, httpx로 외부 API 비동기 호출.
+
+**API Key 형식 확정**: `vk_{agent_id_no_dashes}_{random_urlsafe_48bytes}`
+- `agent_id`를 Key에 포함: bcrypt는 비결정적이므로 DB 조회 선행 후 `checkpw()` 검증.
+- 보안 수준: 128비트 + 48바이트 랜덤 = 유추 불가 보장.
+- 발급 시 원문 1회 반환, DB에는 bcrypt 해시만 저장.
+
+**임베딩 추상화 레이어 확정**:
+- `EmbeddingProvider` ABC → `GrokEmbeddingProvider` (기본) + `OpenAIEmbeddingProvider` (폴백).
+- `EmbeddingService.generate()`만 외부에서 호출. AI 공급자 변경 시 이 파일만 수정.
+
+**로깅 전략**:
+- `structlog` 사용. 개발: 컬러 콘솔, 프로덕션: JSON (Railway 로그 수집기 호환).
+- 모든 로그 메시지 한국어 + 구조화된 컨텍스트(agent_id, knowledge_id 등) 포함.
+
+**에러 처리**:
+- `VegaError(code, detail)` → `vega_exception_handler` → `{ success, error_code, message }`.
+- RPC 에러 메시지 파싱으로 PostgreSQL RAISE EXCEPTION → VegaErrorCode 자동 변환.
+
+### 이슈 & 해결
+- `fn_register_agent` RPC 시그니처: 사전 생성 UUID를 파라미터로 전달해
+  API Key에 agent_id를 포함시키는 구조 확정.
+  → `rpc_functions.sql`의 `fn_register_agent`에 `p_agent_id UUID` 파라미터 추가 필요.
+
+### 다음 할 일 (Week 2)
+- [ ] rpc_functions.sql의 fn_register_agent에 p_agent_id 파라미터 추가
+- [ ] rpc_functions.sql에 fn_search_knowledge 함수 추가 (pgvector 검색)
+- [ ] Supabase 대시보드에서 SQL 3파일 실행
+- [ ] `pip install -r requirements.txt` 로컬 테스트
+- [ ] `uvicorn app.main:app --reload`로 서버 기동 확인
+- [ ] Swagger UI (/docs)에서 엔드포인트 동작 확인
 
 ---
 

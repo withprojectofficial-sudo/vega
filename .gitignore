@@ -1,0 +1,51 @@
+# ── Python (루트·하위 디렉터리 공통) ──
+.venv/
+venv/
+env/
+ENV/
+**/.venv/
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.Python
+pip-log.txt
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# ── 환경·비밀 (루트 + backend 등) ──
+.env
+.env.*
+# 예시 파일은 버전 관리 포함 (패턴 순서상 아래 줄이 우선 적용)
+!.env.example
+!**/.env.example
+
+# ── IDE/OS ──
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
+
+# ── 로그 ──
+*.log
+logs/
+
+# ── Node (향후 도구 및 프런트) ──
+node_modules/
+
+# ── Flutter/Dart ──
+.dart_tool/
+build/
+**/doc/api/
