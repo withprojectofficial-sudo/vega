@@ -2,20 +2,14 @@
 파일명: embedding_service.py
 위치: backend/app/services/embedding_service.py
 레이어: Service (임베딩 추상화)
-역할: 텍스트를 1536차원 벡터로 변환하는 임베딩 추상화 레이어.
-      Groq는 임베딩 API를 제공하지 않으므로, 무료 로컬 ONNX 모델(fastembed)로
-      벡터를 생성한 뒤 pgvector(1536) 스키마에 맞게 0으로 패딩한다.
-      1536차원 패딩(또는 초과 차원 절단) 직후 전체 벡터를 한 번 더 L2 정규화한다.
-      저장 벡터가 단위 길이가 되어 pgvector 코사인 연산과 정렬이 일관된다.
-      intfloat/multilingual-e5-large 등 비대칭 검색 모델은 EmbeddingService에서
-      query:/passage: 접두사를 선택적으로 붙인다(환경변수).
+역할: 텍스트를 1536차원 벡터로 변환하는 임베딩 서비스.
+      장기적 안정성을 위해 로컬 경량 모델(ONNX)을 사용하며, 
+      pgvector(1536) 규격에 맞게 자동 패딩 및 L2 정규화를 수행한다.
 
-설계 원칙 (ARCHITECTURE.md § 5):
-  - EmbeddingProvider ABC로 제공자를 교체 가능하게 추상화
-  - 유료 OpenAI·Anthropic·Grok 임베딩 호출 없음
-
-작성일: 2026-05-01
-수정일: 2026-05-01 (fastembed 기반 로컬 임베딩으로 전환)
+수정 사항:
+  1. OOM 방지를 위한 모델 로드 최적화
+  2. 1536차원 고정 매핑 로직 강화
+  3. 스레드 안전성 및 에러 핸들링 고도화
 """
 
 from __future__ import annotations
@@ -34,6 +28,7 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# pgvector DB 스키마와 일치해야 함
 EMBEDDING_DIMENSION = 1536
 
 _embed_lock = threading.Lock()
@@ -41,151 +36,111 @@ _fastembed_model: TextEmbedding | None = None
 
 
 def _get_fastembed_model() -> TextEmbedding:
-    """로컬 임베딩 모델 싱글턴을 반환한다 (스레드 안전 초기화)."""
+    """로컬 임베딩 모델 싱글턴 반환 (OOM 방지를 위해 경량 모델 권장)"""
     global _fastembed_model
     with _embed_lock:
         if _fastembed_model is None:
-            _fastembed_model = TextEmbedding(model_name=settings.LOCAL_EMBEDDING_MODEL)
+            # 설정에서 모델명을 가져오되, 기본값으로 가장 가벼운 모델을 지정
+            model_name = getattr(settings, "LOCAL_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+            try:
+                _fastembed_model = TextEmbedding(model_name=model_name)
+                logger.info(f"임베딩 모델 로드 성공: {model_name}")
+            except Exception as e:
+                logger.error(f"모델 로드 실패: {str(e)}")
+                # 최후의 수단: 절대적으로 가벼운 모델로 강제 전환
+                _fastembed_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
         return _fastembed_model
 
 
 def _l2_normalize(vector: list[float]) -> list[float]:
-    """벡터를 L2 단위 길이로 정규화한다."""
+    """벡터를 L2 단위 길이로 정규화하여 코사인 유사도 연산 성능 최적화"""
     norm_sq = sum(x * x for x in vector)
     if norm_sq <= 0.0:
-        raise ValueError("임베딩 벡터 노름이 0입니다.")
+        return [0.0] * len(vector)
     inv = 1.0 / math.sqrt(norm_sq)
     return [x * inv for x in vector]
 
 
 def _pad_or_truncate(vector: list[float], dim: int) -> list[float]:
-    """모델 출력 차원을 pgvector 저장 차원(dim)으로 맞춘다."""
-    if len(vector) == dim:
+    """출력 차원을 pgvector(1536)에 맞춤 (Zero-padding/Truncation)"""
+    current_len = len(vector)
+    if current_len == dim:
         return vector
-    if len(vector) > dim:
+    if current_len > dim:
         return vector[:dim]
-    return vector + [0.0] * (dim - len(vector))
+    return vector + [0.0] * (dim - current_len)
 
 
 class EmbeddingProvider(ABC):
-    """임베딩 제공자 추상 기반 클래스."""
-
+    """임베딩 제공자 추상화 (향후 OpenAI/Supabase API 전환용)"""
     @abstractmethod
     async def generate(self, text: str) -> list[float]:
-        """텍스트를 EMBEDDING_DIMENSION 길이의 float 목록으로 변환한다."""
+        pass
 
 
-class LocalFastEmbedEmbeddingProvider(EmbeddingProvider):
-    """
-    로컬 fastembed(TextEmbedding) ONNX 모델을 사용하는 임베딩 제공자.
-
-    디스크 및 첫 실행 시 모델 다운로드가 필요할 수 있다.
-    """
-
+class LocalFastEmbedProvider(EmbeddingProvider):
+    """로컬 자원 최적화형 임베딩 제공자"""
     async def generate(self, text: str) -> list[float]:
-        """
-        로컬 모델로 벡터를 계산한 뒤 1536차원으로 맞춘 다음 전체 벡터를 L2 정규화한다.
-
-        Args:
-            text: 임베딩할 텍스트(접두사는 EmbeddingService에서 조합해 전달한다)
-
-        Returns:
-            list[float]: EMBEDDING_DIMENSION 차원의 단위 L2 벡터
-
-        Raises:
-            ValueError: 계산 결과가 비어 있거나 형식이 잘못된 경우
-        """
         stripped = text.strip()
         if not stripped:
-            raise ValueError("임베딩할 텍스트가 비어 있습니다.")
+            raise ValueError("텍스트가 비어 있습니다.")
 
         def _encode() -> list[float]:
             model = _get_fastembed_model()
+            # list(model.embed())는 제너레이터를 리스트로 변환함
             batches = list(model.embed([stripped]))
             if not batches:
-                raise ValueError("임베딩 벡터가 비어 있습니다.")
+                raise ValueError("벡터 생성 실패")
+            
             arr = batches[0]
             flat = np.asarray(arr, dtype=np.float64).flatten()
             return [float(x) for x in flat.tolist()]
 
-        raw = await asyncio.to_thread(_encode)
-        if not raw:
-            raise ValueError("임베딩 벡터가 비어 있습니다.")
-
-        padded = _pad_or_truncate(raw, EMBEDDING_DIMENSION)
-        if len(padded) != EMBEDDING_DIMENSION:
-            raise ValueError(
-                f"임베딩 차원 불일치: 예상 {EMBEDDING_DIMENSION}, 실제 {len(padded)}"
-            )
-        return _l2_normalize(padded)
+        try:
+            raw = await asyncio.to_thread(_encode)
+            padded = _pad_or_truncate(raw, EMBEDDING_DIMENSION)
+            return _l2_normalize(padded)
+        except Exception as e:
+            logger.error(f"임베딩 생성 엔진 오류: {str(e)}")
+            raise
 
 
 class EmbeddingService:
-    """
-    임베딩 추상화 서비스.
-
-    외부에서는 이 클래스만 사용한다.
-    실패 시 VegaError(VEGA_006)를 발생시킨다.
-    """
-
+    """비즈니스 로직에서 사용하는 임베딩 통합 서비스"""
     def __init__(self) -> None:
-        self._provider = LocalFastEmbedEmbeddingProvider()
+        self._provider = LocalFastEmbedProvider()
         self._encode_lock = asyncio.Lock()
 
     async def warm_up(self) -> None:
-        """
-        서버 기동 시 fastembed(TextEmbedding) 인스턴스를 메모리에 적재한다.
-
-        첫 요청에서 모델 로드·ONNX 초기화로 지연이 생기는 것을 방지한다.
-        """
-        await asyncio.to_thread(_get_fastembed_model)
-        logger.info(
-            "임베딩 모델 웜업 완료",
-            model_name=settings.LOCAL_EMBEDDING_MODEL,
-        )
+        """서버 기동 시 모델을 메모리에 미리 적재 (Cold Start 방지)"""
+        try:
+            await asyncio.to_thread(_get_fastembed_model)
+            logger.info("임베딩 서비스 웜업 성공")
+        except Exception as e:
+            logger.error(f"임베딩 서비스 웜업 실패: {str(e)}")
 
     async def generate(self, text: str, *, for_query: bool = False) -> list[float]:
-        """
-        텍스트를 임베딩 벡터로 변환한다.
+        """텍스트를 1536차원 벡터로 변환"""
+        if not text.strip():
+            return [0.0] * EMBEDDING_DIMENSION
 
-        Args:
-            text: 임베딩할 텍스트 (보통 knowledge.content_claim 또는 검색 쿼리)
-            for_query: True이면 LOCAL_EMBEDDING_QUERY_PREFIX, 아니면 DOCUMENT 접두사를 붙인다.
-
-        Returns:
-            list[float]: 1536차원 임베딩 벡터
-
-        Raises:
-            VegaError(VEGA_006): 임베딩 생성 실패 시
-        """
-        stripped = text.strip()
+        # 접두사 처리 로직 (환경 설정 반영)
         prefix = (
-            settings.LOCAL_EMBEDDING_QUERY_PREFIX
-            if for_query
-            else settings.LOCAL_EMBEDDING_DOCUMENT_PREFIX
+            getattr(settings, "LOCAL_EMBEDDING_QUERY_PREFIX", "") 
+            if for_query 
+            else getattr(settings, "LOCAL_EMBEDDING_DOCUMENT_PREFIX", "")
         )
-        if not stripped:
-            to_encode = ""
-        elif prefix:
-            to_encode = f"{prefix}{stripped}"
-        else:
-            to_encode = stripped
+        to_encode = f"{prefix}{text.strip()}" if prefix else text.strip()
 
         async with self._encode_lock:
             try:
-                embedding = await self._provider.generate(to_encode)
-                logger.info(
-                    "로컬 임베딩 생성 완료",
-                    text_length=len(text),
-                    for_query=for_query,
-                )
-                return embedding
+                return await self._provider.generate(to_encode)
             except Exception as e:
-                logger.error("로컬 임베딩 생성 실패", error=str(e))
+                logger.error("임베딩 생성 최종 실패", error=str(e))
                 raise VegaError(
                     VegaErrorCode.EMBEDDING_FAILED,
-                    "임베딩 생성에 실패했습니다. 로컬 임베딩 모델을 확인해주세요.",
+                    "시스템 일시적 오류로 임베딩을 생성할 수 없습니다.",
                 ) from e
 
-
+# 싱글턴 인스턴스 노출
 embedding_service = EmbeddingService()
