@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "echo 'skip — Flutter는 build 스크립트에서 설치'",
+  "buildCommand": "bash frontend/scripts/vercel_build.sh",
+  "outputDirectory": "frontend/build/web",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}

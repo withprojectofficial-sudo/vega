@@ -13,11 +13,19 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.v1.router import router as v1_router
 from app.config import settings
 from app.db.supabase_client import close_supabase_client, init_supabase_client
-from app.exceptions import VegaError, unhandled_exception_handler, vega_exception_handler
+from app.exceptions import (
+    VegaError,
+    rate_limit_exceeded_handler,
+    unhandled_exception_handler,
+    vega_exception_handler,
+)
+from app.limiter import limiter
 from app.services.embedding_service import embedding_service
 from app.utils.logger import get_logger
 
@@ -64,6 +72,7 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if not settings.is_production else None,
         lifespan=lifespan,
     )
+    app.state.limiter = limiter
 
     # ── 미들웨어 등록 (순서 중요: 마지막 등록이 가장 먼저 실행) ──
 
@@ -83,9 +92,13 @@ def create_app() -> FastAPI:
             allowed_hosts=["*.railway.app", "*.vega.ai"],  # 실제 도메인으로 교체
         )
 
+    # Rate limit: IP 기반, 데코레이터 미적용 엔드포인트는 default_limits(분당 20회) 적용
+    app.add_middleware(SlowAPIMiddleware)
+
     # ── 예외 핸들러 등록 ──
-    app.add_exception_handler(VegaError, vega_exception_handler)          # type: ignore[arg-type]
-    app.add_exception_handler(Exception, unhandled_exception_handler)     # type: ignore[arg-type]
+    app.add_exception_handler(VegaError, vega_exception_handler)                      # type: ignore[arg-type]
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)         # type: ignore[arg-type]
+    app.add_exception_handler(Exception, unhandled_exception_handler)                 # type: ignore[arg-type]
 
     # ── API 라우터 등록 ──
     app.include_router(v1_router, prefix="/api")

@@ -14,10 +14,11 @@
 작성일: 2026-05-01
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from supabase import AsyncClient
 
 from app.dependencies import get_current_agent, get_db
+from app.limiter import limiter
 from app.schemas.agent import AgentInDB
 from app.schemas.common import BaseResponse, PaginatedResponse
 from app.schemas.knowledge import (
@@ -45,8 +46,10 @@ router = APIRouter()
         "발행 직후 상태는 `pending`이며, LLM(Groq) 품질 평가 완료 후 `active`로 전환됩니다."
     ),
 )
+@limiter.limit("3/minute")
 async def publish_knowledge(
-    request: KnowledgePublishRequest,
+    request: Request,
+    body: KnowledgePublishRequest,
     current_agent: AgentInDB = Depends(get_current_agent),
     db: AsyncClient = Depends(get_db),
 ) -> BaseResponse[KnowledgePublishResponse]:
@@ -54,14 +57,14 @@ async def publish_knowledge(
     지식을 발행한다. API Key 인증 필요.
 
     Args:
-        request: 지식 발행 정보 (title, content_claim, domain, tags 등)
+        body: 지식 발행 정보 (title, content_claim, domain, tags 등)
         current_agent: 인증된 발행자 에이전트
         db: Supabase 클라이언트
 
     Returns:
         BaseResponse[KnowledgePublishResponse]: knowledge_id + pending 상태
     """
-    result = await knowledge_service.publish_knowledge(request, current_agent, db)
+    result = await knowledge_service.publish_knowledge(body, current_agent, db)
     return BaseResponse[KnowledgePublishResponse](data=result)
 
 

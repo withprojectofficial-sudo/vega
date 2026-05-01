@@ -11,6 +11,7 @@ from enum import Enum
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 
 
 class VegaErrorCode(str, Enum):
@@ -83,6 +84,38 @@ class VegaError(Exception):
         self.detail = detail
         self.http_status = _HTTP_STATUS_MAP[code]
         super().__init__(f"[{code.value}] {detail}")
+
+
+def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """
+    Rate Limit 초과 시 JSON 응답을 반환한다.
+
+    SlowAPIMiddleware는 동기 예외 핸들러만 안전하게 호출하므로 동기 함수로 둔다.
+    응답 형식은 VegaError와 유사하게 success / error_code / message 를 맞춘다.
+
+    Args:
+        request: FastAPI Request
+        exc: slowapi RateLimitExceeded (내부에 적중한 Limit 메타가 포함됨)
+
+    Returns:
+        JSONResponse: 429 Too Many Requests
+    """
+    limit_desc = str(exc.detail) if exc.detail else "분당 요청 한도"
+    response = JSONResponse(
+        status_code=429,
+        content={
+            "success": False,
+            "error_code": "RATE_LIMIT_EXCEEDED",
+            "message": (
+                "요청 횟수가 허용 한도를 초과했습니다. "
+                f"적용된 제한: {limit_desc}. 잠시 후 다시 시도해주세요."
+            ),
+        },
+    )
+    return request.app.state.limiter._inject_headers(
+        response,
+        getattr(request.state, "view_rate_limit", None),
+    )
 
 
 async def vega_exception_handler(request: Request, exc: VegaError) -> JSONResponse:

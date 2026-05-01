@@ -15,13 +15,14 @@
 import asyncio
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from supabase import AsyncClient
 
 from app.config import settings
 from app.dependencies import get_current_agent, get_db
 from app.exceptions import VegaError, VegaErrorCode
+from app.limiter import limiter
 from app.schemas.agent import AgentInDB
 from app.schemas.common import BaseResponse
 from app.schemas.knowledge import KnowledgeDomain, KnowledgeItem
@@ -124,8 +125,10 @@ async def _call_groq_research(question: str) -> str:
         "API Key 인증이 필요합니다."
     ),
 )
+@limiter.limit("5/minute")
 async def research(
-    request: ResearchRequest,
+    request: Request,
+    body: ResearchRequest,
     current_agent: AgentInDB = Depends(get_current_agent),
     db: AsyncClient = Depends(get_db),
 ) -> BaseResponse[ResearchResponse]:
@@ -138,13 +141,13 @@ async def research(
       3. pgvector로 관련 Vega 지식 검색 (선택적)
       4. 요약 + 관련 지식 통합 반환
     """
-    logger.info("리서치 시작", agent_id=current_agent.id, question_length=len(request.question))
+    logger.info("리서치 시작", agent_id=current_agent.id, question_length=len(body.question))
 
-    llm_task = asyncio.create_task(_call_groq_research(request.question))
+    llm_task = asyncio.create_task(_call_groq_research(body.question))
     embedding_task: asyncio.Task[list[float]] | None = None
-    if request.include_related_knowledge:
+    if body.include_related_knowledge:
         embedding_task = asyncio.create_task(
-            embedding_service.generate(request.question, for_query=True),
+            embedding_service.generate(body.question, for_query=True),
         )
 
     ai_summary = await llm_task
@@ -158,8 +161,8 @@ async def research(
                 "match_threshold": 0.6,
                 "match_count": 5,
             }
-            if request.domain is not None:
-                rpc_params["filter_domain"] = request.domain.value
+            if body.domain is not None:
+                rpc_params["filter_domain"] = body.domain.value
 
             search_result = await db.rpc("fn_search_knowledge", rpc_params).execute()
 
@@ -193,7 +196,7 @@ async def research(
 
     return BaseResponse[ResearchResponse](
         data=ResearchResponse(
-            question=request.question,
+            question=body.question,
             ai_summary=ai_summary,
             related_knowledge=related_knowledge,
             knowledge_count=len(related_knowledge),
