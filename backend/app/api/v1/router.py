@@ -9,9 +9,12 @@
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import agent, knowledge, research
+from app.api.v1.endpoints import admin, agent, knowledge, research
 
 router = APIRouter(prefix="/v1")
+
+# 관리자 전용: /api/v1/admin/* (X-Admin-Token)
+router.include_router(admin.router, prefix="/admin", tags=["Admin"])
 
 # 에이전트 관련 엔드포인트: /api/v1/agent/*
 router.include_router(agent.router, prefix="/agent", tags=["Agent"])

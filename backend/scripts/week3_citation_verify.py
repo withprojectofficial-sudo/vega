@@ -5,13 +5,13 @@ Week 3: 인용(cite) RPC·API 무결성 검증.
   1) 발행자·인용자(consumer) 에이전트 등록
   2) 인용자 포인트 충전 (service_role PostgREST PATCH)
   3) 발행자가 지식 발행 (pending)
-  4) fn_update_knowledge_status 로 active 전환 (RPC)
+  4) POST /admin/knowledge/review 로 active 전환 (X-Admin-Token)
   5) 인용 전후 GET /agent/{id}/points 로 잔액 확인
   6) POST /knowledge/cite 로 인용
   7) 동일 지식 재인용 시 VEGA_010 (409) 확인 — 1인용 1차감, 중복 시 추가 차감 없음
 
 사전 조건:
-  - backend/.env (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+  - backend/.env (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ADMIN_SECRET_TOKEN)
   - Supabase에 fn_cite_knowledge 가 최신본일 것 (p_consumer_agent_id 인수명)
   - uvicorn 기동: http://127.0.0.1:8000
 
@@ -22,7 +22,6 @@ Week 3: 인용(cite) RPC·API 무결성 검증.
 from __future__ import annotations
 
 import os
-import sys
 import uuid
 from pathlib import Path
 
@@ -66,26 +65,29 @@ def charge_agent_points(
     print(f"[OK] 인용자 포인트 충전: agent_id={agent_id} -> {new_balance}p")
 
 
-def activate_knowledge(
-    supabase_url: str,
-    service_key: str,
+def activate_knowledge_via_admin_api(
+    client: httpx.Client,
     knowledge_id: str,
+    admin_token: str,
 ) -> None:
-    """pending 지식을 active로 전환 (검증용)."""
-    base = supabase_url.rstrip("/") + "/rest/v1/rpc/fn_update_knowledge_status"
-    h = _rest_headers(service_key)
-    with httpx.Client(timeout=60.0) as client:
-        r = client.post(
-            base,
-            headers=h,
-            json={
-                "p_knowledge_id": knowledge_id,
-                "p_new_status": "active",
-                "p_new_system_score": 0.5,
-            },
-        )
-        r.raise_for_status()
-    print(f"[OK] 지식 active 전환: knowledge_id={knowledge_id}")
+    """관리자 HTTP API로 pending → active 전환 (로컬 검증용)."""
+    r = client.post(
+        f"{API_BASE}/admin/knowledge/review",
+        headers={
+            "X-Admin-Token": admin_token,
+            "Content-Type": "application/json",
+        },
+        json={
+            "knowledge_id": knowledge_id,
+            "new_status": "active",
+            "new_system_score": 0.5,
+        },
+    )
+    r.raise_for_status()
+    body = r.json()
+    if body.get("success") is False:
+        raise RuntimeError(body)
+    print(f"[OK] 지식 active 전환(API): knowledge_id={knowledge_id}")
 
 
 def fetch_points(client: httpx.Client, agent_id: str, api_key: str) -> int:
@@ -105,6 +107,11 @@ def main() -> None:
     service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
     if not supabase_url or not service_key:
         print("[FAIL] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 가 .env 에 없습니다.")
+        raise SystemExit(1)
+
+    admin_token = os.environ.get("ADMIN_SECRET_TOKEN", "").strip()
+    if not admin_token:
+        print("[FAIL] ADMIN_SECRET_TOKEN 이 .env 에 없습니다. 관리자 승인 API 호출에 필요합니다.")
         raise SystemExit(1)
 
     tag = uuid.uuid4().hex[:6]
@@ -164,7 +171,7 @@ def main() -> None:
         kid = str(pk_j["data"]["knowledge_id"])
         print(f"[OK] 지식 발행 knowledge_id={kid} (pending)")
 
-        activate_knowledge(supabase_url, service_key, kid)
+        activate_knowledge_via_admin_api(client, kid, admin_token)
 
         pub_pts_before = fetch_points(client, pub_id, pub_key)
         con_pts_before = fetch_points(client, con_id, con_key)
