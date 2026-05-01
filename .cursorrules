@@ -1,0 +1,60 @@
+{
+  "rules": [
+    "=== [VEGA 프로젝트 AI 행동 규칙] ===",
+
+    "--- [1. 파일 참조 순서] ---",
+    "코드 생성 전 반드시 ARCHITECTURE.md → CLAUDE.md → PROJECT_CONTEXT.md 순서로 확인한다.",
+    "새 모듈 추가 시 ARCHITECTURE.md의 디렉터리 구조를 먼저 확인하고 일관성을 유지한다.",
+    "중요한 설계 결정은 DEV_LOG.md에 즉시 기록한다.",
+
+    "--- [2. 언어 & 네이밍 규칙] ---",
+    "Python 변수명·함수명·클래스명은 영어(snake_case/PascalCase)를 사용하되, 주석·독스트링·로그 메시지는 한국어로 작성한다.",
+    "Dart/Flutter 변수명·함수명은 영어(camelCase/PascalCase)를 사용하고, 주석은 한국어로 작성한다.",
+    "SQL 컬럼명은 영어 snake_case를 유지한다.",
+    "환경변수명은 UPPER_SNAKE_CASE 영어를 사용한다.",
+
+    "--- [3. Python / FastAPI 코드 원칙] ---",
+    "Any 타입 사용을 절대 금지한다. 모든 함수에 타입 힌트와 리턴 타입을 명시한다.",
+    "Pydantic v2를 모든 요청/응답 모델에 사용하며 BaseModel을 상속한다.",
+    "모든 엔드포인트는 async def로 작성하고, DB 호출은 비동기로 처리한다.",
+    "비즈니스 로직은 라우터가 아닌 서비스 레이어(services/)에 위치시킨다.",
+    "예외 처리는 CLAUDE.md에 정의된 에러 코드 체계를 사용하며, HTTPException을 직접 raise 하지 않고 커스텀 예외 클래스를 사용한다.",
+    "포인트 차감+인용 카운트 증가는 반드시 Supabase RPC(트랜잭션)로 묶어 처리한다. 절대 분리하지 않는다.",
+
+    "--- [4. Flutter / Dart 코드 원칙] ---",
+    "상태관리는 flutter_riverpod만 사용하며, setState는 로컬 UI 상태에만 허용한다.",
+    "HTTP 통신은 dio 패키지만 사용하며, API 호출은 repository 레이어에 캡슐화한다.",
+    "라우팅은 go_router를 사용하며, 라우트 경로는 AppRoutes 상수로 관리한다.",
+    "모든 위젯은 반응형으로 작성하며, 하드코딩된 픽셀 값 사용을 금지한다.",
+    "API Key 등 민감 정보는 dart-define으로만 주입하며, 소스코드에 절대 포함하지 않는다.",
+
+    "--- [5. 문서화 규칙] ---",
+    "모든 Python 함수/클래스에 한국어 독스트링을 작성한다. 형식: 기능 설명, Args, Returns, Raises.",
+    "모든 Dart 함수/클래스에 한국어 /// 주석을 작성한다.",
+    "자명한 코드(예: 단순 getter)에는 주석을 달지 않는다. 비즈니스 규칙, 주의사항, 이유가 있는 코드에만 주석을 단다.",
+    "새 파일 생성 시 파일 최상단에 파일 목적·위치·담당 레이어를 한국어로 기술한다.",
+
+    "--- [6. 데이터베이스 원칙] ---",
+    "모든 DB 접근은 RLS(Row Level Security)를 우회하지 않는다.",
+    "마이그레이션 파일은 Supabase CLI로만 관리하며, 직접 DDL 실행을 금지한다.",
+    "pgvector 쿼리는 반드시 HNSW 인덱스를 활용하도록 작성한다.",
+    "trust_score는 DB에서 직접 수정하지 않으며, 반드시 RPC 함수를 통해 갱신한다.",
+
+    "--- [7. 보안 원칙] ---",
+    "환경변수는 .env 파일에만 저장하고, .env는 절대 git에 커밋하지 않는다.",
+    ".env.example을 항상 최신 상태로 유지하며, 실제 값이 아닌 키 이름과 설명만 기입한다.",
+    "API Key는 해시(bcrypt/sha256)하여 DB에 저장하며, 원문은 발급 시 1회만 반환한다.",
+    "X-Admin-Token은 Grok API 관련 관리자 엔드포인트에만 사용한다.",
+
+    "--- [8. 배포 & CI/CD 원칙] ---",
+    "모든 코드는 즉시 배포 가능한(Deployment-Ready) 상태를 유지한다.",
+    "Railway는 백엔드(FastAPI), Vercel은 프론트엔드(Flutter Web)에만 사용한다.",
+    "main 브랜치는 프로덕션, dev 브랜치는 개발용으로 유지한다.",
+    "Railway 자동 배포 트리거는 main 브랜치 push로만 활성화한다.",
+
+    "--- [9. 모노레포 구조 준수] ---",
+    "백엔드 코드는 /backend, 프론트엔드 코드는 /frontend 디렉터리에만 위치한다.",
+    "공유 타입/스키마는 /backend/app/schemas, /frontend/lib/models에 각각 정의한다.",
+    "루트 디렉터리에는 문서 파일(.md), 환경설정, 배포 스크립트만 위치한다."
+  ]
+}
