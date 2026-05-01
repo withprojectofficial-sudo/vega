@@ -97,15 +97,22 @@ async def _call_groq_research(question: str) -> str:
                 },
             )
             response.raise_for_status()
-    except httpx.HTTPError as e:
+    except httpx.RequestError as e:
         logger.error("Groq 리서치 API 호출 실패", error=str(e))
         raise VegaError(
             VegaErrorCode.LLM_PROVIDER_FAILED,
             "Groq AI 리서치 호출에 실패했습니다.",
         ) from e
 
-    result = response.json()
-    return str(result["choices"][0]["message"]["content"])
+    try:
+        result = response.json()
+        return str(result["choices"][0]["message"]["content"])
+    except (KeyError, TypeError, ValueError) as e:
+        logger.error("Groq 응답 파싱 실패", error=str(e))
+        raise VegaError(
+            VegaErrorCode.LLM_PROVIDER_FAILED,
+            "Groq AI 응답을 처리하지 못했습니다.",
+        ) from e
 
 
 @router.post(
@@ -136,7 +143,9 @@ async def research(
     llm_task = asyncio.create_task(_call_groq_research(request.question))
     embedding_task: asyncio.Task[list[float]] | None = None
     if request.include_related_knowledge:
-        embedding_task = asyncio.create_task(embedding_service.generate(request.question))
+        embedding_task = asyncio.create_task(
+            embedding_service.generate(request.question, for_query=True),
+        )
 
     ai_summary = await llm_task
     related_knowledge: list[KnowledgeItem] = []

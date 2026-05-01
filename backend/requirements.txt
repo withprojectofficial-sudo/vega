@@ -1,38 +1,30 @@
-# ================================================================
-# Vega Backend 의존성 패키지
-# 위치: backend/requirements.txt
-# 실행: pip install -r requirements.txt
-# Python: 3.11+
-# ================================================================
+# Vega backend dependencies (UTF-8). Prefer: pip install -r requirements.txt
+# Python 3.11+
 
-# ── 웹 프레임워크 ──
+# Web
 fastapi==0.115.12
-uvicorn[standard]==0.34.0        # ASGI 서버 (표준: websockets, httptools 포함)
+uvicorn[standard]==0.34.0
 
-# ── 유효성 검증 ──
-pydantic==2.13.3                 # v2 필수; supabase 2.29+ 호환
-pydantic-settings==2.9.1         # .env 파일 로드
+# Validation
+pydantic==2.13.3
+pydantic-settings==2.9.1
 
-# ── 데이터베이스 ──
-supabase==2.29.0                 # supabase-py 2.15는 JWT 형식 키만 허용 → sb_ 키는 2.29+
+# Database
+supabase==2.29.0
 
-# ── HTTP 클라이언트 (Groq 등 REST) ──
-httpx==0.28.1                    # 비동기 HTTP 클라이언트
+# HTTP (Groq etc.)
+httpx==0.28.1
 
-# ── 로컬 임베딩 (Groq 미지원; pgvector 1536 유지 위해 서버 패딩)
-# Dockerfile: 프로덕션에서는 CPU 전용 PyTorch 선설치 권장(이미지 크기 및 CUDA 미사용).
-sentence-transformers==4.0.2
+# Local embedding (fastembed / ONNX)
+fastembed==0.7.4
 
-# ── 보안 ──
-bcrypt==4.3.0                    # API Key 해싱 (CLAUDE.md § 보안 규칙)
-python-jose[cryptography]==3.3.0 # JWT (Post-MVP 확장 대비)
+# Security
+bcrypt==4.3.0
+python-jose[cryptography]==3.3.0
 
-# ── 유틸리티 ──
-python-multipart==0.0.20         # Form 데이터 파싱
-anyio==4.9.0                     # 비동기 호환 레이어
+# Utilities
+python-multipart==0.0.20
+anyio==4.9.0
 
-# ── 로깅 ──
-structlog==25.3.0                # 구조화된 JSON 로깅
-
-# ── 에러 모니터링 (Week 5 연동 예정) ──
-# sentry-sdk[fastapi]==2.x.x    # 주석 해제 후 Week 5에 활성화
+# Logging
+structlog==25.3.0

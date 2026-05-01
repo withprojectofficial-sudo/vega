@@ -36,7 +36,7 @@ async def publish_knowledge(
     지식을 발행하고 임베딩을 생성한 후 DB에 저장한다.
 
     처리 순서:
-      1. content_claim 임베딩 생성 (로컬 sentence-transformers, 무료)
+      1. content_claim 임베딩 생성 (로컬 fastembed, 무료)
       2. knowledge 레코드 INSERT (status: pending)
       3. 응답 반환 (LLM 품질 평가는 별도 관리자 엔드포인트에서 처리)
 
@@ -54,7 +54,15 @@ async def publish_knowledge(
     """
     # 임베딩 생성 (실패 시 VEGA_006 — 지식 발행 전체 실패)
     logger.info("임베딩 생성 시작", agent_id=current_agent.id, title=request.title)
-    embedding_vector = await embedding_service.generate(request.content_claim)
+    embedding_vector = await embedding_service.generate(
+        request.content_claim,
+        for_query=False,
+    )
+    logger.info(
+        "지식 임베딩 벡터 생성 완료 — DB vector(1536) 저장 예정",
+        embedding_dim=len(embedding_vector),
+        agent_id=current_agent.id,
+    )
 
     # DB에 지식 저장
     try:
@@ -102,7 +110,10 @@ async def search_knowledge(
         VegaError(VEGA_006): 쿼리 임베딩 생성 실패 시
     """
     # 쿼리 임베딩 생성
-    query_embedding = await embedding_service.generate(request.query)
+    query_embedding = await embedding_service.generate(
+        request.query,
+        for_query=True,
+    )
 
     # pgvector 시맨틱 검색 (Supabase RPC 호출)
     # fn_search_knowledge는 향후 rpc_functions.sql에 추가 예정

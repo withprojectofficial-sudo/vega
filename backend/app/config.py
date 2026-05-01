@@ -39,7 +39,10 @@ class Settings(BaseSettings):
     GROQ_CHAT_MODEL: str = "llama-3.3-70b-versatile"
 
     # ── 임베딩 (로컬, 무료) ── Groq는 임베딩 API 미제공 · pgvector(1536) 유지 위해 패딩
-    LOCAL_EMBEDDING_MODEL: str = "paraphrase-multilingual-mpnet-base-v2"
+    LOCAL_EMBEDDING_MODEL: str = "intfloat/multilingual-e5-large"
+    # E5 계열은 검색 시 query:/passage: 접두사 권장. mpnet 등에는 빈 문자열로 둔다.
+    LOCAL_EMBEDDING_QUERY_PREFIX: str = "query: "
+    LOCAL_EMBEDDING_DOCUMENT_PREFIX: str = "passage: "
 
     # ── 관리자 인증 ──
     # X-Admin-Token 헤더 검증용. 최소 32자 이상 권장.

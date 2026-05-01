@@ -10,8 +10,14 @@
   단일 호출로 처리해야 한다. 절대 분리 호출 금지.
   실패 시 전체 롤백은 RPC 내부의 PostgreSQL 트랜잭션이 보장한다.
 
+  DB 인수 p_consumer_agent_id = 인용(소비) 에이전트.
+
 작성일: 2026-05-01
+수정일: 2026-05-01 (RPC 응답·예외 메시지 파싱 보강, new_trust_score 반영)
 """
+
+import json
+from typing import cast
 
 from supabase import AsyncClient
 
@@ -32,6 +38,65 @@ _RPC_ERROR_MAP: dict[str, VegaErrorCode] = {
     "VEGA_009": VegaErrorCode.SELF_CITATION,
     "VEGA_010": VegaErrorCode.DUPLICATE_CITATION,
 }
+
+
+def _unwrap_rpc_result_data(data: object) -> dict[str, object]:
+    """
+    PostgREST RPC가 JSON을 dict·단일 요소 리스트·JSON 문자열 중 어떤 형태로 돌려줄지에 대비한다.
+
+    Args:
+        data: supabase.rpc(...).execute().data
+
+    Returns:
+        dict[str, object]: 파싱된 RPC JSON 객체
+
+    Raises:
+        VegaError(VEGA_005): 형식이 예상과 다를 때
+    """
+    if isinstance(data, str):
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError as e:
+            raise VegaError(
+                VegaErrorCode.TRANSACTION_FAILED,
+                "인용 RPC 응답 JSON 파싱에 실패했습니다.",
+            ) from e
+        if not isinstance(parsed, dict):
+            raise VegaError(
+                VegaErrorCode.TRANSACTION_FAILED,
+                "인용 RPC 응답 형식이 올바르지 않습니다.",
+            )
+        return cast(dict[str, object], parsed)
+
+    if isinstance(data, list):
+        if len(data) == 1 and isinstance(data[0], dict):
+            return cast(dict[str, object], data[0])
+        raise VegaError(
+            VegaErrorCode.TRANSACTION_FAILED,
+            "인용 RPC 응답 형식이 올바르지 않습니다.",
+        )
+
+    if isinstance(data, dict):
+        return cast(dict[str, object], data)
+
+    raise VegaError(
+        VegaErrorCode.TRANSACTION_FAILED,
+        "인용 RPC 응답 형식이 올바르지 않습니다.",
+    )
+
+
+def _raw_exception_message(exc: Exception) -> str:
+    """supabase/postgrest 예외에서 RAISE 메시지 후보 문자열을 뽑는다."""
+    msg = str(exc)
+    for attr in ("message", "msg"):
+        v = getattr(exc, attr, None)
+        if isinstance(v, str) and v.strip():
+            msg = v
+            break
+    details = getattr(exc, "details", None)
+    if isinstance(details, str) and details.strip():
+        msg = f"{msg} {details}"
+    return msg
 
 
 def _parse_rpc_error(error_msg: str) -> tuple[VegaErrorCode, str]:
@@ -103,11 +168,11 @@ async def cite_knowledge(
             "fn_cite_knowledge",
             {
                 "p_knowledge_id":   knowledge_id,
-                "p_citer_agent_id": current_agent.id,
+                "p_consumer_agent_id": current_agent.id,
             },
         ).execute()
     except Exception as e:
-        error_msg = str(e)
+        error_msg = _raw_exception_message(e)
         error_code, detail = _parse_rpc_error(error_msg)
         logger.warning(
             "인용 RPC 실패",
@@ -118,7 +183,7 @@ async def cite_knowledge(
         )
         raise VegaError(error_code, detail)
 
-    rpc_data: dict = result.data
+    rpc_data = _unwrap_rpc_result_data(result.data)
     logger.info(
         "인용 트랜잭션 완료",
         knowledge_id=knowledge_id,
@@ -127,10 +192,14 @@ async def cite_knowledge(
         new_citation_count=rpc_data.get("new_citation_count"),
     )
 
+    trust_raw = rpc_data.get("new_trust_score")
+    if trust_raw is None:
+        trust_raw = rpc_data.get("new_agent_vote_score", 0.0)
+
     return KnowledgeCiteResponse(
-        transaction_id=rpc_data["transaction_id"],
-        new_citation_count=rpc_data["new_citation_count"],
-        new_trust_score=rpc_data.get("new_agent_vote_score", 0.0),
-        citer_remaining_points=rpc_data["citer_remaining_points"],
-        publisher_earned_points=rpc_data["publisher_earned_points"],
+        transaction_id=str(rpc_data["transaction_id"]),
+        new_citation_count=int(rpc_data["new_citation_count"]),
+        new_trust_score=float(trust_raw),
+        citer_remaining_points=int(rpc_data["citer_remaining_points"]),
+        publisher_earned_points=int(rpc_data["publisher_earned_points"]),
     )

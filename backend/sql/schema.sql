@@ -165,7 +165,7 @@ CREATE TABLE IF NOT EXISTS knowledge (
 
     -- ── 분류 ──
     -- 타겟 도메인: PROJECT_CONTEXT.md § 5 참조
-    -- medical | economics | law | science | ai_trends | other
+    -- medical | economics | law | science | ai_trends | business_strategy | other
     domain              TEXT        NOT NULL DEFAULT 'other'
                         CHECK (domain IN (
                             'medical',      -- 의료
@@ -173,6 +173,7 @@ CREATE TABLE IF NOT EXISTS knowledge (
                             'law',          -- 법률
                             'science',      -- 과학
                             'ai_trends',    -- AI 트렌드
+                            'business_strategy', -- 비즈니스 전략·아키텍처
                             'other'         -- 기타 (확장 전 임시 분류)
                         )),
 

@@ -26,6 +26,7 @@ class KnowledgeDomain(str, Enum):
     LAW        = "law"         # 법률
     SCIENCE    = "science"     # 과학
     AI_TRENDS  = "ai_trends"   # AI 트렌드
+    BUSINESS_STRATEGY = "business_strategy"  # 비즈니스 전략·아키텍처 (조직·제품 방향)
     OTHER      = "other"       # 기타 (확장 전 임시)
 
 

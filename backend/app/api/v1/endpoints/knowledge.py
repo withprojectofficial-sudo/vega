@@ -8,8 +8,8 @@
 엔드포인트:
   POST /api/v1/knowledge/publish  - 지식 발행 + 임베딩 생성 (인증 필요)
   GET  /api/v1/knowledge/search   - 시맨틱 검색 (인증 불필요)
-  GET  /api/v1/knowledge/{id}     - 지식 상세 조회 (인증 불필요)
   POST /api/v1/knowledge/cite     - 지식 인용 원자적 트랜잭션 (인증 필요)
+  GET  /api/v1/knowledge/{id}     - 지식 상세 조회 (인증 불필요)
 
 작성일: 2026-05-01
 """
@@ -97,30 +97,6 @@ async def search_knowledge(
     return await knowledge_service.search_knowledge(request, db)
 
 
-@router.get(
-    "/{knowledge_id}",
-    response_model=BaseResponse[KnowledgeDetailResponse],
-    summary="지식 상세 조회",
-    description="지식 상세 정보와 신뢰점수 구성요소를 조회합니다. 인증 불필요.",
-)
-async def get_knowledge_detail(
-    knowledge_id: str,
-    db: AsyncClient = Depends(get_db),
-) -> BaseResponse[KnowledgeDetailResponse]:
-    """
-    지식 상세 정보를 조회한다. 인증 불필요.
-
-    Args:
-        knowledge_id: 조회할 지식 UUID
-        db: Supabase 클라이언트
-
-    Returns:
-        BaseResponse[KnowledgeDetailResponse]: 지식 상세 + 신뢰점수 구성요소 + 발행자 정보
-    """
-    result = await knowledge_service.get_knowledge_detail(knowledge_id, db)
-    return BaseResponse[KnowledgeDetailResponse](data=result)
-
-
 @router.post(
     "/cite",
     response_model=BaseResponse[KnowledgeCiteResponse],
@@ -143,13 +119,37 @@ async def cite_knowledge(
 
     Args:
         request: 인용 요청 (knowledge_id)
-        current_agent: 인증된 인용자 에이전트
+        current_agent: 인증된 인용자(consumer) 에이전트
         db: Supabase 클라이언트
 
     Returns:
-        BaseResponse[KnowledgeCiteResponse]: 트랜잭션 결과 (잔여 포인트, 갱신 카운트 등)
+        BaseResponse[KnowledgeCiteResponse]: 트랜잭션 결과 (잔여 포인트, 갱신된 카운트 등)
     """
     result = await citation_service.cite_knowledge(
         request.knowledge_id, current_agent, db
     )
     return BaseResponse[KnowledgeCiteResponse](data=result)
+
+
+@router.get(
+    "/{knowledge_id}",
+    response_model=BaseResponse[KnowledgeDetailResponse],
+    summary="지식 상세 조회",
+    description="지식 상세 정보와 신뢰점수 구성요소를 조회합니다. 인증 불필요.",
+)
+async def get_knowledge_detail(
+    knowledge_id: str,
+    db: AsyncClient = Depends(get_db),
+) -> BaseResponse[KnowledgeDetailResponse]:
+    """
+    지식 상세 정보를 조회한다. 인증 불필요.
+
+    Args:
+        knowledge_id: 조회할 지식 UUID
+        db: Supabase 클라이언트
+
+    Returns:
+        BaseResponse[KnowledgeDetailResponse]: 지식 상세 + 신뢰점수 구성요소 + 발행자 정보
+    """
+    result = await knowledge_service.get_knowledge_detail(knowledge_id, db)
+    return BaseResponse[KnowledgeDetailResponse](data=result)

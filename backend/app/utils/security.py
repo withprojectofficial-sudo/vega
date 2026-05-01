@@ -15,6 +15,7 @@ API Key 설계:
 작성일: 2026-05-01
 """
 
+import hashlib
 import secrets
 import uuid
 
@@ -27,6 +28,15 @@ _API_KEY_PREFIX = "vk"
 _SEPARATOR = "_"
 
 
+def _prehash_for_bcrypt(plain_key: str) -> bytes:
+    """
+    bcrypt는 원문 72바이트 초과 시 오류를 내므로, SHA-256으로 고정 길이 바이트로 변환한다.
+
+    API Key 원문(vk_{32자UUID}_{랜덤})은 72바이트를 초과할 수 있어 전 처리가 필요하다.
+    """
+    return hashlib.sha256(plain_key.encode("utf-8")).digest()
+
+
 def generate_api_key(agent_id: str) -> tuple[str, str]:
     """
     API Key 원문과 bcrypt 해시를 생성한다.
@@ -35,7 +45,7 @@ def generate_api_key(agent_id: str) -> tuple[str, str]:
       1. agent_id의 대시를 제거해 32자 UUID 문자열 생성
       2. 64자 랜덤 문자열 생성 (48바이트 urlsafe)
       3. 원문 = "vk_{agent_id_no_dashes}_{random}"
-      4. 해시 = bcrypt(원문, gensalt())
+      4. 해시 = bcrypt(SHA-256(원문), gensalt()) — 원문 길이가 bcrypt 제한(72바이트)을 넘을 수 있어 프리해시
       5. DB에는 해시만 저장, 원문은 1회만 반환
 
     Args:
@@ -53,7 +63,7 @@ def generate_api_key(agent_id: str) -> tuple[str, str]:
 
 def _hash_with_bcrypt(plain_key: str) -> str:
     """
-    문자열을 bcrypt로 해싱한다.
+    문자열을 SHA-256 프리해시한 뒤 bcrypt로 해싱한다.
 
     bcrypt는 매 호출마다 다른 솔트를 사용하므로 비결정적임.
     동일 입력이라도 매번 다른 해시가 생성됨.
@@ -64,10 +74,9 @@ def _hash_with_bcrypt(plain_key: str) -> str:
     Returns:
         str: bcrypt 해시 문자열 (60자)
     """
-    hashed = bcrypt.hashpw(plain_key.encode("utf-8"), bcrypt.gensalt())
+    digest = _prehash_for_bcrypt(plain_key)
+    hashed = bcrypt.hashpw(digest, bcrypt.gensalt())
     return hashed.decode("utf-8")
-
-
 def verify_api_key_hash(plain_key: str, stored_hash: str) -> bool:
     """
     API Key 원문과 DB에 저장된 bcrypt 해시를 비교 검증한다.
@@ -82,7 +91,10 @@ def verify_api_key_hash(plain_key: str, stored_hash: str) -> bool:
         bool: 검증 성공 여부
     """
     try:
-        return bcrypt.checkpw(plain_key.encode("utf-8"), stored_hash.encode("utf-8"))
+        return bcrypt.checkpw(
+            _prehash_for_bcrypt(plain_key),
+            stored_hash.encode("utf-8"),
+        )
     except Exception:
         # 잘못된 해시 형식 등 예외는 False로 처리 (보안상 오류 노출 금지)
         return False

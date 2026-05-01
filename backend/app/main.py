@@ -18,6 +18,7 @@ from app.api.v1.router import router as v1_router
 from app.config import settings
 from app.db.supabase_client import close_supabase_client, init_supabase_client
 from app.exceptions import VegaError, unhandled_exception_handler, vega_exception_handler
+from app.services.embedding_service import embedding_service
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -38,6 +39,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Vega API 서버 시작 중...", environment=settings.ENVIRONMENT)
     await init_supabase_client()
     logger.info("Supabase 클라이언트 초기화 완료")
+    await embedding_service.warm_up()
+    logger.info("임베딩 서비스 웜업 완료")
 
     yield  # 앱 실행 구간
 

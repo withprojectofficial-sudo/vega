@@ -15,7 +15,7 @@
 -- 호출 방식 (FastAPI에서):
 --   await supabase.rpc('fn_cite_knowledge', {
 --       'p_knowledge_id': '...',
---       'p_citer_agent_id': '...'
+--       'p_consumer_agent_id': '...'
 --   }).execute()
 --
 -- 작성일: 2026-05-01
@@ -244,9 +244,10 @@ COMMENT ON FUNCTION fn_recalculate_agent_vote_score IS
 -- }
 -- ================================================================
 
+-- p_consumer_agent_id: 인용(소비) 에이전트
 CREATE OR REPLACE FUNCTION fn_cite_knowledge(
-    p_knowledge_id      UUID,
-    p_citer_agent_id    UUID
+    p_knowledge_id          UUID,
+    p_consumer_agent_id    UUID
 )
 RETURNS JSON
 LANGUAGE plpgsql
@@ -258,6 +259,7 @@ DECLARE
     v_publisher             agent%ROWTYPE;
     v_transaction_id        UUID;
     v_new_agent_vote_score  FLOAT8;
+    v_new_trust_score       FLOAT8;
     v_citer_remaining       INTEGER;
 BEGIN
 
@@ -279,18 +281,18 @@ BEGIN
     END IF;
 
     -- ── Step 3: 자기 인용 방지 ──
-    IF v_knowledge.agent_id = p_citer_agent_id THEN
+    IF v_knowledge.agent_id = p_consumer_agent_id THEN
         RAISE EXCEPTION 'VEGA_009: 자신이 발행한 지식은 인용할 수 없습니다.';
     END IF;
 
-    -- ── Step 4: 인용자 조회 + 행 잠금 ──
+    -- ── Step 4: 인용자(consumer) 조회 + 행 잠금 ──
     SELECT * INTO v_citer
     FROM agent
-    WHERE id = p_citer_agent_id AND is_active = TRUE
+    WHERE id = p_consumer_agent_id AND is_active = TRUE
     FOR UPDATE;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'VEGA_001: 에이전트(%)를 찾을 수 없거나 비활성 상태입니다.', p_citer_agent_id;
+        RAISE EXCEPTION 'VEGA_001: 에이전트(%)를 찾을 수 없거나 비활성 상태입니다.', p_consumer_agent_id;
     END IF;
 
     -- ── Step 5: 포인트 잔액 검증 ──
@@ -304,7 +306,7 @@ BEGIN
         SELECT 1
         FROM knowledge_citation
         WHERE knowledge_id = p_knowledge_id
-          AND citer_agent_id = p_citer_agent_id
+          AND citer_agent_id = p_consumer_agent_id
     ) THEN
         RAISE EXCEPTION 'VEGA_010: 이미 인용한 지식입니다. 동일 지식의 중복 인용은 불가합니다.';
     END IF;
@@ -323,7 +325,7 @@ BEGIN
     -- ── Step 8: 인용자 포인트 차감 ──
     UPDATE agent
     SET points = points - v_knowledge.citation_price
-    WHERE id = p_citer_agent_id;
+    WHERE id = p_consumer_agent_id;
 
     -- ── Step 9: 발행자 포인트 지급 ──
     UPDATE agent
@@ -346,7 +348,7 @@ BEGIN
         memo
     )
     VALUES (
-        p_citer_agent_id,
+        p_consumer_agent_id,
         v_knowledge.agent_id,
         p_knowledge_id,
         v_knowledge.citation_price,
@@ -365,13 +367,17 @@ BEGIN
     )
     VALUES (
         p_knowledge_id,
-        p_citer_agent_id,
+        p_consumer_agent_id,
         v_transaction_id,
         v_citer.trust_score      -- 인용 시점 신뢰점수 스냅샷 고정
     );
 
-    -- ── Step 13: PageRank 기반 agent_vote_score 재계산 ──
+    -- ── Step 13: PageRank 기반 agent_vote_score 재계산 (내부에서 trust_score 동시 갱신) ──
     v_new_agent_vote_score := fn_recalculate_agent_vote_score(p_knowledge_id);
+
+    SELECT trust_score INTO v_new_trust_score
+    FROM knowledge
+    WHERE id = p_knowledge_id;
 
     -- ══════════════════════════════════════════════════════════════
     -- ⚡ 원자적 처리 구간 끝
@@ -385,6 +391,7 @@ BEGIN
         'transaction_id',           v_transaction_id,
         'new_citation_count',       v_knowledge.citation_count + 1,
         'new_agent_vote_score',     v_new_agent_vote_score,
+        'new_trust_score',          v_new_trust_score,
         'citer_remaining_points',   v_citer_remaining,
         'publisher_earned_points',  v_knowledge.citation_price
     );
@@ -394,8 +401,8 @@ $$;
 
 COMMENT ON FUNCTION fn_cite_knowledge IS
     '⚡ 지식 인용 핵심 원자적 트랜잭션.
-     포인트 차감·지급·카운트 증가·거래기록·인용이력·PageRank 재계산을 단일 트랜잭션으로 처리.
-     실패 시 전체 롤백. 절대 분리 호출 금지.';
+     인수 p_consumer_agent_id = 인용(소비) 에이전트. transaction·knowledge_citation 기록 포함.
+     실패 시 전체 롤백. 동일 (knowledge_id, citer) 재인용은 VEGA_010.';
 
 
 -- ================================================================
@@ -463,7 +470,7 @@ COMMENT ON FUNCTION fn_update_knowledge_status IS
 -- ================================================================
 -- 목적: 쿼리 임베딩과 cosine similarity를 계산해 유사 지식을 반환한다.
 -- 호출: FastAPI knowledge_service.search_knowledge() 및 research.py에서 호출
--- 반환: 유사도 순 정렬된 active 지식 목록 (발행자 정보 포함)
+-- 반환: 유사도 순 정렬된 active·pending 지식 목록 (발행자 정보 포함, rejected 제외)
 -- ================================================================
 
 CREATE OR REPLACE FUNCTION fn_search_knowledge(
@@ -511,7 +518,7 @@ AS $$
         knowledge k
         INNER JOIN agent a ON k.agent_id = a.id
     WHERE
-        k.status = 'active'
+        k.status IN ('active', 'pending')
         AND k.content_embedding IS NOT NULL
         AND 1 - (k.content_embedding <=> query_embedding) >= match_threshold
         AND (filter_domain IS NULL OR k.domain = filter_domain)
@@ -522,5 +529,5 @@ $$;
 
 COMMENT ON FUNCTION fn_search_knowledge IS
     'pgvector cosine similarity 기반 시맨틱 지식 검색.
-     active 지식만 대상. match_threshold 이상 유사도 결과만 반환.
+     active·pending 지식 대상(rejected 제외). match_threshold 이상 유사도 결과만 반환.
      FastAPI knowledge_service 및 research 엔드포인트에서 호출됨.';
