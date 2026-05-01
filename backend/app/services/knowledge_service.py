@@ -3,7 +3,7 @@
 위치: backend/app/services/knowledge_service.py
 레이어: Service (지식 비즈니스 로직)
 역할: 지식 발행, 시맨틱 검색, 상세 조회 비즈니스 로직을 처리한다.
-      발행 시 임베딩 생성 → DB 저장 → Grok 품질 평가(비동기) 순서로 처리한다.
+      발행 시 로컬 임베딩 생성 → DB 저장 → LLM 품질 평가(관리자 플로우) 순서로 처리한다.
 작성일: 2026-05-01
 """
 
@@ -36,9 +36,9 @@ async def publish_knowledge(
     지식을 발행하고 임베딩을 생성한 후 DB에 저장한다.
 
     처리 순서:
-      1. content_claim 임베딩 생성 (Grok → OpenAI 폴백)
+      1. content_claim 임베딩 생성 (로컬 sentence-transformers, 무료)
       2. knowledge 레코드 INSERT (status: pending)
-      3. 응답 반환 (Grok 품질 평가는 별도 관리자 엔드포인트에서 처리)
+      3. 응답 반환 (LLM 품질 평가는 별도 관리자 엔드포인트에서 처리)
 
     Args:
         request: 지식 발행 요청

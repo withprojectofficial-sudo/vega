@@ -44,7 +44,7 @@
     "환경변수는 .env 파일에만 저장하고, .env는 절대 git에 커밋하지 않는다.",
     ".env.example을 항상 최신 상태로 유지하며, 실제 값이 아닌 키 이름과 설명만 기입한다.",
     "API Key는 해시(bcrypt/sha256)하여 DB에 저장하며, 원문은 발급 시 1회만 반환한다.",
-    "X-Admin-Token은 Grok API 관련 관리자 엔드포인트에만 사용한다.",
+    "X-Admin-Token은 Groq LLM 등 관리자 전용 엔드포인트에만 사용한다.",
 
     "--- [8. 배포 & CI/CD 원칙] ---",
     "모든 코드는 즉시 배포 가능한(Deployment-Ready) 상태를 유지한다.",

@@ -16,8 +16,12 @@ pydantic-settings==2.9.1         # .env 파일 로드
 # ── 데이터베이스 ──
 supabase==2.29.0                 # supabase-py 2.15는 JWT 형식 키만 허용 → sb_ 키는 2.29+
 
-# ── HTTP 클라이언트 (임베딩 API 호출) ──
+# ── HTTP 클라이언트 (Groq 등 REST) ──
 httpx==0.28.1                    # 비동기 HTTP 클라이언트
+
+# ── 로컬 임베딩 (Groq 미지원; pgvector 1536 유지 위해 서버 패딩)
+# Dockerfile: 프로덕션에서는 CPU 전용 PyTorch 선설치 권장(이미지 크기 및 CUDA 미사용).
+sentence-transformers==4.0.2
 
 # ── 보안 ──
 bcrypt==4.3.0                    # API Key 해싱 (CLAUDE.md § 보안 규칙)

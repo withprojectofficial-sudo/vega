@@ -36,7 +36,10 @@ class VegaErrorCode(str, Enum):
     TRANSACTION_FAILED  = "VEGA_005"  # RPC 롤백 / DB 오류
 
     # 임베딩 관련
-    EMBEDDING_FAILED    = "VEGA_006"  # Grok + OpenAI 모두 실패
+    EMBEDDING_FAILED    = "VEGA_006"  # 로컬 임베딩 실패
+
+    # 외부 LLM (Groq 등)
+    LLM_PROVIDER_FAILED = "VEGA_011"  # 채팅 완성 API 호출 실패
 
     # 중복/충돌
     DUPLICATE_AGENT     = "VEGA_008"  # 중복 에이전트 등록
@@ -56,6 +59,7 @@ _HTTP_STATUS_MAP: dict[VegaErrorCode, int] = {
     VegaErrorCode.DUPLICATE_CITATION:       409,
     VegaErrorCode.TRANSACTION_FAILED:       500,
     VegaErrorCode.EMBEDDING_FAILED:         503,
+    VegaErrorCode.LLM_PROVIDER_FAILED:      503,
 }
 
 

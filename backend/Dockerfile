@@ -16,7 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Python 의존성 먼저 복사 (레이어 캐시 최적화)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# sentence-transformers는 PyTorch 필요 — CPU 바이너리만 설치하여 이미지·의존성 최소화
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt
 
 # 애플리케이션 코드 복사 (.env는 Railway 환경변수로 주입, 복사 안 함)
 COPY app/ ./app/

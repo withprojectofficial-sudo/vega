@@ -402,13 +402,13 @@ COMMENT ON FUNCTION fn_cite_knowledge IS
 -- 함수 5: fn_update_knowledge_status  (관리자 전용)
 -- ================================================================
 -- 목적: 지식 상태 변경 (pending → active | rejected)
--- 호출: Grok 평가 완료 후 system_score와 함께 상태 전환
+-- 호출: LLM 품질 평가 완료 후 system_score와 함께 상태 전환
 -- ================================================================
 
 CREATE OR REPLACE FUNCTION fn_update_knowledge_status(
     p_knowledge_id      UUID,
     p_new_status        TEXT,
-    p_new_system_score  FLOAT8 DEFAULT NULL   -- active 전환 시 Grok 평가 점수
+    p_new_system_score  FLOAT8 DEFAULT NULL   -- active 전환 시 LLM 품질 평가 점수
 )
 RETURNS JSON
 LANGUAGE plpgsql
@@ -435,7 +435,7 @@ BEGIN
     IF p_new_status = 'active' AND p_new_system_score IS NOT NULL THEN
         v_new_trust_score := fn_recalculate_trust_score(
             p_knowledge_id,
-            p_new_system_score,   -- Grok 평가 점수 반영
+            p_new_system_score,   -- LLM 평가 점수 반영
             NULL,
             NULL
         );
@@ -454,7 +454,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION fn_update_knowledge_status IS
-    '관리자/Grok 전용 지식 상태 변경 함수.
+    '관리자·LLM 품질 파이프라인 전용 지식 상태 변경 함수.
      active 전환 시 system_score와 trust_score를 동시에 재계산한다.';
 
 

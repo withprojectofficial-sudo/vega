@@ -2,27 +2,29 @@
 파일명: research.py
 위치: backend/app/api/v1/endpoints/research.py
 레이어: API (리서치 엔드포인트)
-역할: 자연어 질문을 받아 Grok API로 리서치하고 관련 지식을 자동 인용하는 엔드포인트.
+역할: 자연어 질문을 받아 Groq API(OpenAI 호환)로 리서치하고 관련 지식을 검색하는 엔드포인트.
       Post-MVP에서 기능이 확장될 예정이다.
 
 엔드포인트:
-  POST /api/v1/research  - 질문 → Grok 리서치 + 관련 지식 자동 검색
+  POST /api/v1/research  - 질문 → Groq LLM 요약 + 관련 지식 시맨틱 검색
 
 작성일: 2026-05-01
+수정일: 2026-05-01 (Grok(xAI) → Groq 무료 API)
 """
 
-from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends
-from supabase import AsyncClient
+import asyncio
 
 import httpx
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+from supabase import AsyncClient
 
 from app.config import settings
 from app.dependencies import get_current_agent, get_db
 from app.exceptions import VegaError, VegaErrorCode
 from app.schemas.agent import AgentInDB
 from app.schemas.common import BaseResponse
-from app.schemas.knowledge import KnowledgeItem, KnowledgeDomain
+from app.schemas.knowledge import KnowledgeDomain, KnowledgeItem
 from app.services.embedding_service import embedding_service
 from app.utils.logger import get_logger
 
@@ -30,14 +32,13 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 
-# ── 요청/응답 모델 (research 전용) ──
-
 class ResearchRequest(BaseModel):
     """POST /api/v1/research 요청 본문."""
 
     question: str = Field(
-        min_length=10, max_length=1000,
-        description="리서치할 질문 (자연어, 10~1000자)"
+        min_length=10,
+        max_length=1000,
+        description="리서치할 질문 (자연어, 10~1000자)",
     )
     domain: KnowledgeDomain | None = Field(
         default=None, description="관련 도메인 필터 (선택)"
@@ -51,25 +52,25 @@ class ResearchResponse(BaseModel):
     """POST /api/v1/research 성공 응답."""
 
     question: str = Field(description="원본 질문")
-    grok_summary: str = Field(description="Grok AI 리서치 요약 결과")
+    ai_summary: str = Field(description="Groq LLM 리서치 요약 결과")
     related_knowledge: list[KnowledgeItem] = Field(
         default=[], description="관련 Vega 지식 목록 (유사도 순)"
     )
     knowledge_count: int = Field(description="관련 지식 수")
 
 
-async def _call_grok_research(question: str) -> str:
+async def _call_groq_research(question: str) -> str:
     """
-    Grok API에 리서치 질문을 전송하고 요약 결과를 반환한다.
+    Groq OpenAI 호환 API에 리서치 질문을 전송하고 요약 결과를 반환한다.
 
     Args:
         question: 리서치 질문
 
     Returns:
-        str: Grok AI 요약 결과
+        str: LLM 요약 결과
 
     Raises:
-        VegaError(VEGA_006): Grok API 호출 실패 시
+        VegaError(VEGA_011): Groq API 호출 실패 시
     """
     system_prompt = (
         "당신은 Vega 플랫폼의 지식 큐레이터입니다. "
@@ -80,28 +81,31 @@ async def _call_grok_research(question: str) -> str:
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                f"{settings.grok_api_base_url}/chat/completions",
+                f"{settings.groq_api_base_url}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {settings.GROK_API_KEY}",
+                    "Authorization": f"Bearer {settings.GROQ_API_KEY}",
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "grok-3",
+                    "model": settings.GROQ_CHAT_MODEL,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": question},
                     ],
                     "max_tokens": 1000,
-                    "temperature": 0.3,  # 낮은 온도 = 일관성 있는 팩트 위주 답변
+                    "temperature": 0.3,
                 },
             )
             response.raise_for_status()
     except httpx.HTTPError as e:
-        logger.error("Grok 리서치 API 호출 실패", error=str(e))
-        raise VegaError(VegaErrorCode.EMBEDDING_FAILED, "Grok AI 리서치 호출에 실패했습니다.")
+        logger.error("Groq 리서치 API 호출 실패", error=str(e))
+        raise VegaError(
+            VegaErrorCode.LLM_PROVIDER_FAILED,
+            "Groq AI 리서치 호출에 실패했습니다.",
+        ) from e
 
     result = response.json()
-    return result["choices"][0]["message"]["content"]
+    return str(result["choices"][0]["message"]["content"])
 
 
 @router.post(
@@ -109,7 +113,7 @@ async def _call_grok_research(question: str) -> str:
     response_model=BaseResponse[ResearchResponse],
     summary="AI 리서치",
     description=(
-        "자연어 질문을 Grok AI로 리서치하고, 관련 Vega 지식을 시맨틱 검색으로 함께 반환합니다.\n\n"
+        "자연어 질문을 Groq LLM으로 요약하고, 관련 Vega 지식을 시맨틱 검색으로 함께 반환합니다.\n\n"
         "API Key 인증이 필요합니다."
     ),
 )
@@ -119,42 +123,31 @@ async def research(
     db: AsyncClient = Depends(get_db),
 ) -> BaseResponse[ResearchResponse]:
     """
-    질문에 대해 Grok AI 리서치를 수행하고 관련 Vega 지식을 검색한다.
+    질문에 대해 Groq LLM 리서치를 수행하고 관련 Vega 지식을 검색한다.
 
     처리 순서:
-      1. Grok API로 질문 요약 생성
-      2. 질문 임베딩 생성
+      1. Groq API로 질문 요약 생성
+      2. 질문 임베딩 생성 (로컬 모델)
       3. pgvector로 관련 Vega 지식 검색 (선택적)
       4. 요약 + 관련 지식 통합 반환
-
-    Args:
-        request: 리서치 요청 (question, domain, include_related_knowledge)
-        current_agent: 인증된 에이전트
-        db: Supabase 클라이언트
-
-    Returns:
-        BaseResponse[ResearchResponse]: Grok 요약 + 관련 지식 목록
     """
     logger.info("리서치 시작", agent_id=current_agent.id, question_length=len(request.question))
 
-    # Grok 리서치 + 임베딩 병렬 실행
-    import asyncio
-    grok_task = asyncio.create_task(_call_grok_research(request.question))
-    embedding_task = asyncio.create_task(
-        embedding_service.generate(request.question)
-    ) if request.include_related_knowledge else None
+    llm_task = asyncio.create_task(_call_groq_research(request.question))
+    embedding_task: asyncio.Task[list[float]] | None = None
+    if request.include_related_knowledge:
+        embedding_task = asyncio.create_task(embedding_service.generate(request.question))
 
-    grok_summary = await grok_task
+    ai_summary = await llm_task
     related_knowledge: list[KnowledgeItem] = []
 
-    # 관련 지식 검색 (임베딩 결과 활용)
     if embedding_task is not None:
         try:
             query_embedding = await embedding_task
             rpc_params: dict = {
                 "query_embedding": query_embedding,
-                "match_threshold": 0.6,   # 리서치 결과는 더 엄격한 임계값
-                "match_count": 5,         # 최대 5개
+                "match_threshold": 0.6,
+                "match_count": 5,
             }
             if request.domain is not None:
                 rpc_params["filter_domain"] = request.domain.value
@@ -181,7 +174,6 @@ async def research(
                 for row in (search_result.data or [])
             ]
         except Exception as e:
-            # 관련 지식 검색 실패는 전체 응답 실패로 이어지지 않음
             logger.warning("리서치 관련 지식 검색 실패 (응답에서 제외)", error=str(e))
 
     logger.info(
@@ -193,7 +185,7 @@ async def research(
     return BaseResponse[ResearchResponse](
         data=ResearchResponse(
             question=request.question,
-            grok_summary=grok_summary,
+            ai_summary=ai_summary,
             related_knowledge=related_knowledge,
             knowledge_count=len(related_knowledge),
         )

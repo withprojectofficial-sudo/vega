@@ -37,8 +37,8 @@ class KnowledgeStatus(str, Enum):
     schema.sql knowledge.status CHECK 제약과 동기화 필수.
     """
 
-    PENDING  = "pending"   # 발행 직후 (Grok 평가 대기)
-    ACTIVE   = "active"    # 인용 가능 (Grok 평가 완료)
+    PENDING  = "pending"   # 발행 직후 (LLM 품질 평가 대기)
+    ACTIVE   = "active"    # 인용 가능 (LLM 평가 완료)
     REJECTED = "rejected"  # 인용 불가 (관리자 기각)
 
 
@@ -103,8 +103,8 @@ class KnowledgePublishResponse(BaseModel):
     """POST /api/knowledge/publish 성공 응답."""
 
     knowledge_id: str = Field(description="생성된 지식 UUID")
-    status: KnowledgeStatus = Field(description="초기 상태 (pending — Grok 평가 대기)")
-    message: str = Field(default="지식이 발행되었습니다. Grok 품질 평가 후 active 상태로 전환됩니다.")
+    status: KnowledgeStatus = Field(description="초기 상태 (pending — LLM 품질 평가 대기)")
+    message: str = Field(default="지식이 발행되었습니다. LLM 품질 평가 후 active 상태로 전환됩니다.")
 
 
 class KnowledgeItem(BaseModel):

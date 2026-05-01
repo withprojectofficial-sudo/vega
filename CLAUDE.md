@@ -24,8 +24,8 @@
 | **Backend** | Python + FastAPI | 3.11+ / 0.110+ | Pydantic v2 필수 |
 | **Frontend** | Flutter Web (Dart) | Dart 3.x | go_router, riverpod, dio |
 | **Database** | Supabase (PostgreSQL + pgvector) | PG 15 | HNSW 인덱스, RLS 적용 |
-| **AI Engine** | Grok API (xAI) | REST | 관리자 전용 내부 AI |
-| **Embedding** | Grok → OpenAI text-embedding-3-small | 1536차원 | 추상화 레이어 필수 |
+| **AI Engine** | Groq API (무료 티어, OpenAI 호환 REST) | Llama 계열 등 | 리서치·관리 파이프라인 LLM |
+| **Embedding** | 로컬 sentence-transformers (무료) | 패딩해 1536차원 저장 | Groq는 임베딩 API 미제공; `EmbeddingService` 유지 |
 | **Backend 배포** | Railway | - | GitHub push 자동 배포 |
 | **Frontend 배포** | Vercel | - | dart-define 환경변수 |
 | **에러 모니터링** | Sentry | - | Week 5 연동 예정 |
@@ -55,11 +55,12 @@
 | `VEGA_003` | 지식 상태 오류 (pending/rejected 지식 인용 시도) | 403 |
 | `VEGA_004` | 지식 미존재 | 404 |
 | `VEGA_005` | 트랜잭션 실패 (RPC 롤백) | 500 |
-| `VEGA_006` | 임베딩 생성 실패 (Grok/OpenAI 오류) | 503 |
+| `VEGA_006` | 임베딩 생성 실패 (로컬 모델·환경 오류) | 503 |
 | `VEGA_007` | 관리자 인증 실패 (X-Admin-Token 불일치) | 401 |
 | `VEGA_008` | 중복 에이전트 등록 | 409 |
 | `VEGA_009` | 자기 인용 시도 (발행자와 인용자 동일) | 403 |
 | `VEGA_010` | 중복 인용 시도 (동일 지식 재인용 불가) | 409 |
+| `VEGA_011` | 외부 LLM 호출 실패 (예: Groq chat/completions) | 503 |
 
 ### 3-4. 즉시 배포 가능 상태 유지
 - 모든 환경변수는 `.env.example`에 키 이름과 설명 기재.
@@ -80,7 +81,7 @@
 | Dart 클래스/위젯 | `PascalCase` 영어 | `KnowledgeDetailPage` |
 | Dart 주석 | **한국어** | `/// 지식 상세 화면 위젯` |
 | SQL 컬럼/테이블 | `snake_case` 영어 | `content_embedding`, `agent_id` |
-| 환경변수 | `UPPER_SNAKE_CASE` 영어 | `SUPABASE_URL`, `GROK_API_KEY` |
+| 환경변수 | `UPPER_SNAKE_CASE` 영어 | `SUPABASE_URL`, `GROQ_API_KEY` |
 
 ---
 

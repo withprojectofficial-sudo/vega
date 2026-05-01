@@ -9,6 +9,12 @@
 --   2) rpc_functions.sql (원자적 트랜잭션 함수)
 --   3) rls_policies.sql  (행 수준 보안)
 --
+-- 문제 해결:
+--   ERROR: column "api_key_hash" of relation "agent" does not exist
+--   → 과거에 다른 정의로 만든 agent 테이블이 남아 CREATE TABLE IF NOT EXISTS가
+--     스킵된 경우입니다. 개발 DB라면 backend/sql/schema_reset.sql 실행 후
+--     위 3개 파일을 순서대로 다시 실행하세요.
+--
 -- 테이블 의존성 그래프:
 --   agent
 --     └── knowledge      (agent.id → knowledge.agent_id)
@@ -183,7 +189,7 @@ CREATE TABLE IF NOT EXISTS knowledge (
     trust_score         FLOAT8      NOT NULL DEFAULT 0.0
                         CHECK (trust_score BETWEEN 0.0 AND 1.0),
 
-    -- Grok API 자동 품질 평가 (가중치 40%)
+    -- LLM(Groq 등) 또는 관리자 파이프라인 자동 품질 평가 (가중치 40%)
     system_score        FLOAT8      NOT NULL DEFAULT 0.0
                         CHECK (system_score BETWEEN 0.0 AND 1.0),
 
@@ -198,8 +204,8 @@ CREATE TABLE IF NOT EXISTS knowledge (
                         CHECK (admin_score BETWEEN 0.0 AND 1.0),
 
     -- ── 생명주기 ──
-    -- pending: 발행 직후 (Grok 평가 대기 중, 인용 불가)
-    -- active : Grok 평가 완료 (인용 가능)
+    -- pending: 발행 직후 (LLM 품질 평가 대기 중, 인용 불가)
+    -- active : LLM 품질 평가 완료 (인용 가능)
     -- rejected: 관리자 기각 (인용 불가)
     -- 상세 흐름: PROJECT_CONTEXT.md § 4 참조
     status              TEXT        NOT NULL DEFAULT 'pending'
@@ -215,7 +221,7 @@ CREATE TABLE IF NOT EXISTS knowledge (
                         CHECK (citation_count >= 0),
 
     -- ── 벡터 임베딩 ──
-    -- 1536차원: Grok 임베딩 API (폴백: OpenAI text-embedding-3-small)
+    -- 1536차원: 로컬 임베딩(sentence-transformers) + 0패딩. 구형 유료 모델 임베딩과 혼용 금지
     -- NULL: 임베딩 미생성 상태 (발행 처리 중 또는 VEGA_006 실패)
     -- 인덱스: HNSW (아래 별도 정의)
     content_embedding   VECTOR(1536),

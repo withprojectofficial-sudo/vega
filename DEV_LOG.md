@@ -5,6 +5,19 @@
 
 ---
 
+## [2026-05-01] - 외부 AI: Grok(xAI) 제거 · Groq 무료 LLM + 로컬 임베딩
+
+### 작업 내역
+- `GROK_*`/`OPENAI_*` 환경변수 제거 → `GROQ_API_KEY`, `GROQ_CHAT_MODEL`, `LOCAL_EMBEDDING_MODEL` 등으로 교체 (`backend/app/config.py`, `backend/.env.example`).
+- 리서치: `POST /api/v1/research` 응답 필드 `grok_summary` → `ai_summary`, Groq `chat/completions` 호출 (`backend/app/api/v1/endpoints/research.py`).
+- 임베딩: Groq 미지원 → `sentence-transformers` 로컬 인코딩 후 1536차원 패딩 (`embedding_service.py`). Docker에서 CPU 전용 PyTorch 선설치 (`Dockerfile`).
+- 신규 에러 코드 `VEGA_011` (Groq 등 LLM HTTP 실패) — `exceptions.py`, `CLAUDE.md` 표 동기화.
+
+### 결정 사항
+- **유료 OpenAI·Anthropic·xAI 호출 금지(현 단계)**. 채팅은 Groq 무료 티어, 임베딩은 서버 로컬(모델 캐시·첫 실행 시 Hugging Face 다운로드).
+
+---
+
 ## [2026-05-01] - 프로젝트 헌법 정립 및 문서 체계 구축
 
 ### 작업 내역
@@ -19,7 +32,7 @@
 - **네이밍 규칙 확정**: 코드는 영어(snake_case/camelCase), 주석·독스트링·로그는 한국어로 통일.
 - **에러 코드 체계 도입**: `VEGA_001`~`VEGA_008` 커스텀 에러 코드 정의 (CLAUDE.md § 3-3 참조).
 - **모노레포 디렉터리 구조 확정**: `/backend` (FastAPI), `/frontend` (Flutter) 분리, 루트는 문서만.
-- **임베딩 추상화 레이어 필수**: `EmbeddingService`로 Grok/OpenAI 교체 가능하도록 설계.
+- **임베딩 추상화 레이어 필수**: `EmbeddingService`로 로컬·외부 임베딩 공급자를 교체 가능하도록 설계.
 - **MVP 로드맵 확정**: Week 1~5 단계별 완료 기준 설정 (ARCHITECTURE.md § 8 참조).
 
 ### 이슈 & 해결
@@ -117,7 +130,7 @@ backend/
     │   └── endpoints/
     │       ├── agent.py       - POST /register, GET /{id}/points
     │       ├── knowledge.py   - POST /publish, GET /search, GET /{id}, POST /cite
-    │       └── research.py    - POST /research (Grok + 시맨틱 검색)
+    │       └── research.py    - POST /research (Groq LLM + 시맨틱 검색)
     ├── schemas/           - Pydantic v2 모델 (common, agent, knowledge, transaction)
     ├── services/          - 비즈니스 로직 (agent, knowledge, citation, embedding)
     ├── db/                - Supabase 비동기 클라이언트 싱글턴
@@ -136,8 +149,8 @@ backend/
 - 발급 시 원문 1회 반환, DB에는 bcrypt 해시만 저장.
 
 **임베딩 추상화 레이어 확정**:
-- `EmbeddingProvider` ABC → `GrokEmbeddingProvider` (기본) + `OpenAIEmbeddingProvider` (폴백).
-- `EmbeddingService.generate()`만 외부에서 호출. AI 공급자 변경 시 이 파일만 수정.
+- `EmbeddingProvider` ABC → 현재 구현은 `LocalSentenceEmbeddingProvider`(sentence-transformers, 무료).
+- `EmbeddingService.generate()`만 외부에서 호출. 공급자 변경 시 이 파일만 수정.
 
 **로깅 전략**:
 - `structlog` 사용. 개발: 컬러 콘솔, 프로덕션: JSON (Railway 로그 수집기 호환).

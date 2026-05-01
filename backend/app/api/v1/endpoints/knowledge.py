@@ -42,7 +42,7 @@ router = APIRouter()
     summary="지식 발행",
     description=(
         "지식을 발행하고 content_claim에 대한 임베딩을 자동 생성합니다.\n\n"
-        "발행 직후 상태는 `pending`이며, Grok API 품질 평가 완료 후 `active`로 전환됩니다."
+        "발행 직후 상태는 `pending`이며, LLM(Groq) 품질 평가 완료 후 `active`로 전환됩니다."
     ),
 )
 async def publish_knowledge(
